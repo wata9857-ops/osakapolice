@@ -1,0 +1,18 @@
+import puppeteer from 'puppeteer-core';
+const browser = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new', args: ['--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1180, height: 820 });
+const logs = [];
+page.on('console', (m) => logs.push(m.type() + ': ' + m.text()));
+page.on('pageerror', (e) => logs.push('pageerror: ' + e.message));
+page.on('requestfailed', (r) => logs.push('reqfail: ' + r.url() + ' ' + r.failure()?.errorText));
+await page.goto(process.argv[2] ?? 'http://localhost:5199/', { waitUntil: 'networkidle0' });
+console.log(await page.evaluate(() => { const c = document.createElement('canvas'); return !!c.getContext('webgl2'); }));
+await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent.includes('勤務開始')), { timeout: 120000 });
+await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent.includes('勤務開始')).click());
+await new Promise((r) => setTimeout(r, Number(process.argv[3] ?? 15000)));
+console.log(await page.evaluate(() => { const c = document.querySelector('.maplibregl-canvas'); return c ? [c.width, c.height, c.style.width] : 'no canvas'; }));
+console.log(await page.evaluate(() => { const m = window.__map; if (!m) return 'no map'; return JSON.stringify({ loaded: m.loaded(), styleLoaded: m.isStyleLoaded(), zoom: m.getZoom(), center: m.getCenter(), layers: m.getStyle().layers.length, srcs: Object.keys(m.getStyle().sources).map(k => k + ':' + m.isSourceLoaded(k)), feats: m.queryRenderedFeatures().length }); }));
+await page.screenshot({ path: 'tests/shots/debug.png' });
+console.log(logs.slice(0, 30).join('\n'));
+await browser.close();
