@@ -1532,3 +1532,22 @@ button {
     top: calc(210px + var(--safe-t));
   }
 }
+
+/* phone top bar: drop the emblem, keep clock and key figures on one line */
+.phone .topbar .brand {
+  display: none;
+}
+.phone .clock {
+  padding: 0 10px;
+}
+.phone .clock-d {
+  white-space: nowrap;
+  font-size: 9px;
+}
+.phone .top-tools {
+  padding: 0 4px;
+  gap: 4px;
+}
+.phone .top-tools .btn {
+  min-width: 40px;
+}
