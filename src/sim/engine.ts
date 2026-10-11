@@ -7,10 +7,30 @@ import type { Incident, Unit, RadioMsg, LogEntry, PatrolPlan, Suspect, UnitStatu
 import { AVAILABLE, STATUS_LABEL } from './types';
 import { createUnits, areaPlan } from './units';
 import * as R from './radio';
+import { startEvent, tickEvent, endEvent, type ActiveEvent } from './events';
+import { autoTick, selfInitiated, bulletin } from './autopilot';
+
+/** 指令官 rank by score */
+export const RANKS: [number, string][] = [
+  [0, '巡査'], [800, '巡査長'], [2500, '巡査部長'], [6000, '警部補'], [12000, '警部'], [22000, '警視'], [38000, '警視正'], [60000, '警視長'], [90000, '警視監'],
+];
+export function rankOf(score: number) {
+  let r = RANKS[0][1];
+  for (const [s, n] of RANKS) if (score >= s) r = n;
+  return r;
+}
+export function nextRank(score: number): [number, string] | null {
+  for (const [s, n] of RANKS) if (score < s) return [s, n];
+  return null;
+}
 
 export interface SimSettings {
   rate: number; // incident frequency multiplier
   autoReturn: boolean;
+  /** automatic dispatcher: off / takes over after `autoDelay` real seconds of player inactivity / always */
+  auto: 'off' | 'assist' | 'full';
+  autoDelay: number;
+  events: boolean;
 }
 
 export interface Candidate {
@@ -43,14 +63,21 @@ export class Sim {
   date0: Date; // calendar date of day 0
   speed = 1;
   paused = false;
-  settings: SimSettings = { rate: 1, autoReturn: true };
+  settings: SimSettings = { rate: 1, autoReturn: true, auto: 'assist', autoDelay: 45, events: true };
+  events: ActiveEvent[] = [];
+  weather: 'clear' | 'rain' = 'clear';
+  /** real seconds since the player last touched the console */
+  idleReal = 0;
+  private nextEventT = 0;
+  private nextBulletin = 0;
+  private acc5 = 0;
   units: Unit[] = [];
   unitById = new Map<string, Unit>();
   incidents: Incident[] = [];
   incById = new Map<string, Incident>();
   radio: RadioMsg[] = [];
   log: LogEntry[] = [];
-  stats = { received: 0, resolved: 0, failed: 0, arrests: 0, respTimes: [] as number[] };
+  stats = { received: 0, resolved: 0, failed: 0, arrests: 0, respTimes: [] as number[], score: 0, streak: 0, bestStreak: 0, tickets: 0, questioned: 0, auto: 0 };
   private radioQueue: { at: number; msg: Omit<RadioMsg, 'id' | 't'> }[] = [];
   private radioSeq = 0;
   private incSeq = 0;
@@ -107,7 +134,9 @@ export class Sim {
         if (p) this.placeUnit(u, p.edge, p.s);
       }
     }
-    this.nextSpawn = this.t + 20;
+    this.nextSpawn = this.t + 15;
+    this.nextEventT = this.t + 240;
+    this.nextBulletin = this.t + 600;
     this.sys(`勤務開始。大阪府警察本部 通信指令本部、${this.units.length}隊を運用中。`);
   }
 
@@ -162,17 +191,24 @@ export class Sim {
     const cores = [
       [0, 2500, 1600], [100, -1900, 1500], [1800, 600, 1300], [1250, -3800, 1200],
     ].map(([x, y, r]) => [x, y, r]);
-    // incident slowdowns
+    // incident / event slowdowns
     const blocks: [number, number, number, number][] = [];
+    let globalMul = 1;
+    for (const ev of this.events) {
+      if (ev.x === undefined) globalMul *= ev.trafficMul;
+      else if (ev.icon === '群') blocks.push([ev.x, ev.y!, ev.r ?? 500, 0.7]);
+      else if (ev.trafficMul < 1) blocks.push([ev.x, ev.y!, ev.r ?? 1000, ev.trafficMul]);
+      else if (ev.key === 'rain') globalMul *= ev.trafficMul;
+    }
     for (const inc of this.incidents) {
       if (inc.status === 'resolved' || inc.status === 'failed') continue;
-      if (inc.type.startsWith('acc') || inc.type === 'fire' || inc.type === 'signal')
+      if (inc.type.startsWith('acc') || inc.type === 'fire' || inc.type === 'signal' || inc.type === 'car_fire')
         blocks.push([inc.x, inc.y, inc.type === 'acc_major' ? 700 : 300, inc.type === 'acc_major' ? 0.25 : 0.55]);
     }
     for (let e = 0; e < g.ne; e++) {
       const x = this.edgeMid[e * 2], y = this.edgeMid[e * 2 + 1];
       const c = g.ecls[e];
-      let f = c <= CLS_TERTIARY ? majorBase : minorBase;
+      let f = (c <= CLS_TERTIARY ? majorBase : minorBase) * globalMul;
       if (c <= 3) {
         for (const [cx, cy, r] of cores) {
           const d = Math.hypot(x - cx, y - cy);
@@ -226,6 +262,7 @@ export class Sim {
   // ---------------------------------------------------------------- main loop
   advance(realDt: number) {
     if (this.paused) return;
+    this.idleReal += realDt;
     let dt = realDt * this.speed;
     while (dt > 0) {
       const step = Math.min(dt, 0.5);
@@ -233,6 +270,45 @@ export class Sim {
       dt -= step;
     }
     this.emit('tick');
+  }
+
+  /** player touched the console: the assist dispatcher backs off */
+  markActive() {
+    this.idleReal = 0;
+  }
+
+  addScore(delta: number, reason: string, incidentId?: string) {
+    this.stats.score = Math.max(0, this.stats.score + delta);
+    this.emit('score', { delta, reason, incidentId });
+  }
+
+  private eventsTick() {
+    // end expired events
+    for (const ev of [...this.events]) {
+      if (this.t >= ev.t1) {
+        endEvent(this, ev);
+        this.events = this.events.filter((e) => e !== ev);
+        this.say(R.HQ, '各移動', `${R.HQ}から各移動。「${ev.name}」に伴う警戒態勢を解除する。`, { level: 'info' });
+        this.emit('event', { ev, end: true });
+      } else tickEvent(this, ev);
+    }
+    // new events
+    if (this.settings.events && this.t >= this.nextEventT) {
+      this.nextEventT = this.t + (25 + this.rnd() * 45) * 60;
+      if (this.events.length < 3) {
+        const ev = startEvent(this);
+        if (ev) {
+          this.say(R.HQ, '各移動', `${R.HQ}から各移動。${ev.name}。${ev.desc}。`, { level: 'urgent' });
+          this.addLog(`情勢：${ev.name}`);
+          this.emit('event', { ev, end: false });
+          this.updateTraffic(true);
+        }
+      }
+    }
+    if (this.t >= this.nextBulletin) {
+      this.nextBulletin = this.t + (12 + this.rnd() * 25) * 60;
+      bulletin(this);
+    }
   }
 
   private step(dt: number) {
@@ -248,7 +324,8 @@ export class Sim {
       this.spawnIncident();
       const h = this.hour;
       const diurnal = h >= 1 && h < 6 ? 0.55 : h >= 6 && h < 9 ? 0.9 : h >= 9 && h < 17 ? 1 : h >= 17 && h < 23 ? 1.25 : 0.9;
-      const perHour = 16 * diurnal * this.settings.rate;
+      const evMul = this.events.reduce((a, e) => a * e.rateMul, 1);
+      const perHour = 19 * diurnal * this.settings.rate * evMul;
       this.nextSpawn = this.t + (-Math.log(1 - this.rnd()) * 3600) / perHour;
     }
     for (const u of this.units) this.moveUnit(u, dt);
@@ -264,6 +341,12 @@ export class Sim {
     if (this.acc3 >= 3) {
       this.acc3 = 0;
       this.detectSuspects();
+    }
+    this.acc5 += dt;
+    if (this.acc5 >= 5) {
+      this.acc5 = 0;
+      this.eventsTick();
+      autoTick(this);
     }
   }
 
@@ -438,6 +521,8 @@ export class Sim {
           break;
         }
         if (!u.route && u.wait <= 0) this.nextPatrolLeg(u);
+        // own-initiative activity: questioning, enforcement, crimes spotted on patrol (≈ every 2.5 h per unit)
+        if (u.kind !== 'koban' && this.rnd() < dt / 9000) selfInitiated(this, u);
         break;
       case 'standby':
         if (u.patrol && u.kind !== 'koban' && this.patrolActive(u.patrol) && u.patrol.schedule) this.startPatrol(u, true);
@@ -646,6 +731,23 @@ export class Sim {
     this.emit('change');
   }
 
+  /** a unit that discovered an incident itself takes it on immediately */
+  attachOnScene(u: Unit, inc: Incident) {
+    const old = u.incidentId ? this.incById.get(u.incidentId) : null;
+    if (old && old !== inc) this.detach(u, old);
+    u.incidentId = inc.id;
+    u.task = { kind: 'incident', incidentId: inc.id };
+    u.status = 'enroute';
+    u.emergency = false;
+    u.stats.dispatches++;
+    this.setRoute(u, null);
+    inc.assigned.push(u.id);
+    inc.status = 'dispatched';
+    inc.tDispatch = this.t;
+    inc.updates.push({ t: this.t, kind: 'field', text: `${u.callsign} が現認し対応開始` });
+    this.arrive(u, inc);
+  }
+
   /** remove unit from an incident without further orders */
   private detach(u: Unit, inc: Incident) {
     inc.assigned = inc.assigned.filter((id) => id !== u.id);
@@ -785,6 +887,7 @@ export class Sim {
   cordon(incId: string, unitIds: string[]) {
     const inc = this.incById.get(incId);
     if (!inc || !inc.suspect || !inc.suspect.free) return;
+    inc.cordoned = true;
     const sus = inc.suspect;
     const ls = sus.lastSeen ?? { x: inc.x, y: inc.y, t: inc.t0 };
     const sp = sus.mode === 'car' ? 9 : (FLEE_KMH[sus.mode] ?? 6) / 3.6;
@@ -847,10 +950,16 @@ export class Sim {
   // ---------------------------------------------------------------- incidents
   private pickType(): IncidentType {
     const b = this.band();
-    const total = INCIDENT_TYPES.reduce((a, t) => a + t.rate[b], 0);
+    const w = (t: IncidentType) => {
+      if (t.special) return 0;
+      let x = t.rate[b];
+      for (const ev of this.events) x *= ev.boost[t.key] ?? 1;
+      return x;
+    };
+    const total = INCIDENT_TYPES.reduce((a, t) => a + w(t), 0);
     let r = this.rnd() * total;
     for (const t of INCIDENT_TYPES) {
-      r -= t.rate[b];
+      r -= w(t);
       if (r <= 0) return t;
     }
     return INCIDENT_TYPES[0];
@@ -923,9 +1032,28 @@ export class Sim {
     }
   }
 
-  spawnIncident(typeKey?: string, at?: { x: number; y: number }): Incident | null {
-    const type = typeKey ? TYPE_BY_KEY.get(typeKey)! : this.pickType();
+  spawnIncident(typeKey?: string, at?: { x: number; y: number }, eventName?: string, selfInit = false): Incident | null {
+    const type = typeKey ? TYPE_BY_KEY.get(typeKey) : this.pickType();
+    if (!type) return null;
     let loc: { edge: number; s: number; x: number; y: number } | null = null;
+    // crowd events pull suitable random calls into their area
+    if (!at && !typeKey && !type.where.includes('motorway')) {
+      for (const ev of this.events) {
+        if (ev.pull > 0 && ev.x !== undefined && this.rnd() < ev.pull && (ev.boost[type.key] ?? 1) > 1) {
+          const a = this.rnd() * Math.PI * 2, rr = Math.sqrt(this.rnd()) * (ev.r ?? 500);
+          at = { x: ev.x + Math.cos(a) * rr, y: ev.y! + Math.sin(a) * rr };
+          eventName = ev.name;
+          break;
+        }
+      }
+    }
+    if (!at && type.spots) {
+      const hs = this.world.hotspots.filter((h) => type.spots!.includes(h.name));
+      if (hs.length) {
+        const h = hs[Math.floor(this.rnd() * hs.length)];
+        at = { x: h.x + (this.rnd() - 0.5) * 120, y: h.y + (this.rnd() - 0.5) * 80 };
+      }
+    }
     if (at) loc = this.snap(at.x, at.y, type.where[0] !== 'motorway');
     for (let i = 0; i < 5 && !loc; i++) {
       const l = this.pickLocation(type.where[Math.floor(this.rnd() * type.where.length)]);
@@ -949,6 +1077,11 @@ export class Sim {
     };
     inc.workTotal = inc.work;
     inc.transport = this.rnd() < (type.transport ?? 0);
+    if (eventName) inc.eventName = eventName;
+    if (selfInit) {
+      inc.selfInit = true;
+      inc.caller = '警ら中の部隊（現認）';
+    }
     if (type.flee && this.rnd() < type.flee.p) {
       const p = this.g.pointAt(loc.edge, loc.s);
       inc.suspect = {
@@ -959,14 +1092,15 @@ export class Sim {
         startT: this.t + type.flee.afterMin * 60, giveUpT: this.t + (type.flee.mode === 'car' || type.flee.mode === 'moto' ? 30 : 40) * 60,
       };
     }
-    inc.updates.push({ t: this.t, kind: 'call', text: `110番入電（通報者：${inc.caller}）「${inc.detail}」` });
+    inc.updates.push({ t: this.t, kind: 'call', text: selfInit ? `警ら中の部隊が現認「${inc.detail}」` : `110番入電（通報者：${inc.caller}）「${inc.detail}」` });
+    if (eventName) inc.updates.push({ t: this.t, kind: 'info', text: `関連情勢：${eventName}` });
     if (inc.suspect) inc.updates.push({ t: this.t, kind: 'info', text: `マル被：${inc.suspect.desc}${inc.suspect.free ? `、${R.modeWord(inc.suspect.mode)}で逃走` : ''}` });
     this.incidents.push(inc);
     this.incById.set(inc.id, inc);
     this.stats.received++;
-    this.sys(`110番受理 ${inc.id}【${inc.name}】${inc.address}／通報者：${inc.caller}`, inc.id);
+    if (!selfInit) this.sys(`110番受理 ${inc.id}【${inc.name}】${inc.address}／通報者：${inc.caller}`, inc.id);
     this.addLog(`受理 ${inc.id} ${inc.name} ${inc.address}`, inc.id);
-    this.emit('incident', inc);
+    if (!selfInit) this.emit('incident', inc);
     // keep the list bounded: drop old closed incidents
     if (this.incidents.length > 400) {
       const drop = this.incidents.filter((i) => i.status === 'resolved' || i.status === 'failed').slice(0, 50);
@@ -1147,6 +1281,7 @@ export class Sim {
     inc.tEnd = this.t;
     if (success) this.stats.resolved++;
     else this.stats.failed++;
+    this.scoreIncident(inc, success);
     const units = inc.assigned.map((id) => this.unitById.get(id)!).filter(Boolean);
     const lead = units.find((u) => inc.onScene.includes(u.id)) ?? units[0];
     if (lead) this.say(lead.callsign, R.HQ, R.resolved(lead, inc), { unitId: lead.id, incidentId: inc.id, channel: '現場' }, 1);
@@ -1169,6 +1304,39 @@ export class Sim {
     }
     this.emit('resolved', inc);
     this.emit('change');
+  }
+
+  /** points: priority × response speed, arrest bonus; auto-handled calls earn half */
+  private scoreIncident(inc: Incident, success: boolean) {
+    const base = [0, 300, 180, 100, 50][inc.priority] ?? 50;
+    let pts = 0;
+    let reason = '';
+    if (success) {
+      const target = [0, 6, 9, 14, 20][inc.priority] * 60;
+      const resp = inc.tArrive !== null ? inc.tArrive - inc.t0 : target * 2;
+      const f = resp < target * 0.5 ? 1.6 : resp < target ? 1.2 : resp < target * 1.6 ? 0.8 : 0.4;
+      pts = base * f;
+      reason = f >= 1.6 ? '迅速対応' : f >= 1.2 ? '目標時間内' : f >= 0.8 ? '対応' : '遅延';
+      if (inc.suspect?.caught) {
+        pts += 150;
+        reason += '・マル被確保';
+      }
+      if (inc.selfInit) pts *= 0.6;
+      if (inc.auto) pts *= 0.25;
+      this.stats.streak++;
+      this.stats.bestStreak = Math.max(this.stats.bestStreak, this.stats.streak);
+      if (this.stats.streak > 0 && this.stats.streak % 5 === 0) {
+        pts += 50 * (this.stats.streak / 5);
+        reason += `・連続解決${this.stats.streak}`;
+      }
+    } else {
+      pts = -base * 0.8;
+      reason = '未解決';
+      this.stats.streak = 0;
+    }
+    pts = Math.round(pts);
+    inc.score = pts;
+    this.addScore(pts, `${inc.name}：${reason}${inc.auto ? '（自動指令）' : ''}`, inc.id);
   }
 
   private transport(u: Unit, inc: Incident) {
@@ -1420,6 +1588,8 @@ export class Sim {
       incSeq: this.incSeq,
       radioSeq: this.radioSeq,
       nextSpawn: this.nextSpawn,
+      events: this.events,
+      weather: this.weather,
       units: this.units.map((u) => ({ ...u, manual: false, visited: [...u.visited.entries()].slice(-500) })),
       incidents: this.incidents.map((i) => ({ ...i, reported: [...i.reported] })),
       radio: this.radio.slice(-300),
@@ -1430,11 +1600,13 @@ export class Sim {
     this.t = d.t;
     this.date0 = new Date(d.date0);
     this.speed = d.speed;
-    this.settings = d.settings;
-    this.stats = d.stats;
     this.incSeq = d.incSeq;
     this.radioSeq = d.radioSeq;
     this.nextSpawn = d.nextSpawn;
+    this.events = d.events ?? [];
+    this.weather = d.weather ?? 'clear';
+    this.settings = { ...{ rate: 1, autoReturn: true, auto: 'assist', autoDelay: 45, events: true }, ...d.settings };
+    this.stats = { ...{ score: 0, streak: 0, bestStreak: 0, tickets: 0, questioned: 0, auto: 0 }, ...d.stats };
     const byId = new Map(d.units.map((u) => [u.id, u]));
     for (const u of this.units) {
       const s = byId.get(u.id);

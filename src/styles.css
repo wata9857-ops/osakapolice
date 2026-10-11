@@ -1551,3 +1551,163 @@ button {
 .phone .top-tools .btn {
   min-width: 40px;
 }
+
+/* ---------------------------------------------------------------- score / auto / events */
+.kpi.score {
+  min-width: 108px;
+  position: relative;
+}
+.kpi.score .kpi-v {
+  color: var(--acc);
+}
+.rank-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 5px;
+  height: 3px;
+  background: var(--bg3);
+}
+.rank-bar i {
+  display: block;
+  height: 100%;
+  background: var(--acc);
+}
+.ev-icons i {
+  font-style: normal;
+  font-family: var(--font);
+  font-size: 13px;
+  border: 1px solid var(--p2);
+  color: var(--p2);
+  padding: 0 3px;
+  margin-right: 3px;
+  border-radius: var(--r);
+}
+.auto-chip {
+  font-family: var(--mono);
+  min-width: 96px;
+}
+.auto-chip.auto-wait {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.auto-chip.auto-on {
+  border-color: var(--acc);
+  background: var(--acc-dim);
+  color: var(--acc);
+  animation: autoPulse 1.6s ease-in-out infinite;
+}
+@keyframes autoPulse {
+  50% {
+    background: transparent;
+  }
+}
+.row-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+.tag.t-self {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+.tag.t-auto {
+  color: var(--tx2);
+  border-style: dashed;
+}
+.tag.t-ev {
+  color: var(--p2);
+  border-color: var(--p2);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tag.t-plus {
+  color: var(--ok);
+  border-color: var(--ok);
+  font-family: var(--mono);
+}
+.tag.t-minus {
+  color: var(--p1);
+  border-color: var(--p1);
+  font-family: var(--mono);
+}
+.ev-strip {
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--p2) 6%, var(--bg1));
+}
+.ev-card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px dashed var(--line);
+  cursor: pointer;
+}
+.ev-card:last-child {
+  border-bottom: 0;
+}
+.ev-card:active {
+  background: var(--bg3);
+}
+.ev-ic {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--p2);
+  color: var(--p2);
+  font-weight: 800;
+  font-size: 14px;
+}
+.ev-name {
+  font-weight: 800;
+  font-size: 13px;
+}
+.ev-desc {
+  font-size: 11.5px;
+  color: var(--tx1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toast.score {
+  border-left-color: var(--ok);
+  font-family: var(--mono);
+}
+.toast.score.minus {
+  border-left-color: var(--p1);
+}
+.toast.rank {
+  border-left-color: var(--acc);
+  font-weight: 800;
+}
+.phone .auto-chip {
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.phone .kpi.score {
+  min-width: 70px;
+}
+/* keep the top bar on one line on iPad widths */
+@media (max-width: 1320px) {
+  .topbar .brand > div {
+    display: none;
+  }
+  .kpi {
+    padding: 0 9px;
+    min-width: 54px;
+  }
+}
+@media (max-width: 1060px) {
+  .topbar .kpi.opt {
+    display: none;
+  }
+  .clock {
+    padding: 0 10px;
+  }
+}

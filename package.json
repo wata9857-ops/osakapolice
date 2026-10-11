@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test:sim": "tsx tests/sim.test.ts 2",
+    "test:auto": "tsx tests/auto.test.ts 2",
     "lint": "oxlint",
     "preview": "vite preview",
     "deploy": "bash tools/deploy.sh"

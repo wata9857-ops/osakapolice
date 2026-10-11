@@ -295,11 +295,14 @@ export default function DriveMode({ unitId }: { unitId: string }) {
       const skyDay = new THREE.Color(0xa9c3dc), skyNight = new THREE.Color(0x0a1220), dusk = new THREE.Color(0xd99a6c);
       const sky = skyNight.clone().lerp(skyDay, day);
       if (day > 0.05 && day < 0.6) sky.lerp(dusk, 0.35 * (1 - Math.abs(day - 0.3) / 0.3));
+      const rain = sim.weather === 'rain';
+      if (rain) sky.lerp(new THREE.Color(0x5d656c).multiplyScalar(0.3 + day * 0.7), 0.75);
       scene.background = sky;
       (scene.fog as THREE.Fog).color.copy(sky);
-      (scene.fog as THREE.Fog).far = 700 + day * 300;
-      hemi.intensity = 0.25 + day * 0.95;
-      sun.intensity = day * 1.5;
+      (scene.fog as THREE.Fog).near = rain ? 40 : 120;
+      (scene.fog as THREE.Fog).far = rain ? 320 : 700 + day * 300;
+      hemi.intensity = (0.25 + day * 0.95) * (rain ? 0.7 : 1);
+      sun.intensity = day * (rain ? 0.3 : 1.5);
       sun.position.set(P.x + 300, 400 * Math.max(0.2, elev), -(P.y - 200));
       sun.target.position.set(P.x, 0, -P.y);
       (ground.material as THREE.MeshLambertMaterial).color.setRGB(0.47 * (0.35 + day * 0.65), 0.47 * (0.35 + day * 0.65), 0.44 * (0.35 + day * 0.65));

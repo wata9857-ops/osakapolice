@@ -92,6 +92,13 @@ function layers(p: MapPalette, dark: boolean): LayerSpecification[] {
     { id: 'patrol-fill', type: 'fill', source: 'patrol', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': p.patrol, 'fill-opacity': 0.07 } },
     { id: 'patrol-line', type: 'line', source: 'patrol', filter: ['!=', ['geometry-type'], 'Point'], paint: { 'line-color': p.patrol, 'line-width': 2, 'line-dasharray': [3, 2] } },
     { id: 'patrol-wp', type: 'symbol', source: 'patrol', filter: ['==', ['geometry-type'], 'Point'], layout: { 'icon-image': 'wp', 'icon-allow-overlap': true, 'text-field': ['get', 'n'], 'text-font': FONT_B, 'text-size': 11, 'text-offset': [0, 1.2], 'text-allow-overlap': true }, paint: { 'text-color': p.patrol, 'text-halo-color': p.labelHalo, 'text-halo-width': 1.5 } },
+    { id: 'event-fill', type: 'fill', source: 'events', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': p.pri[2], 'fill-opacity': 0.07 } },
+    { id: 'event-line', type: 'line', source: 'events', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'line-color': p.pri[2], 'line-width': 1.6, 'line-dasharray': [4, 3] } },
+    {
+      id: 'event-label', type: 'symbol', source: 'events', filter: ['==', ['geometry-type'], 'Point'],
+      layout: { 'text-field': ['get', 'n'], 'text-font': FONT_B, 'text-size': 12.5, 'text-allow-overlap': true, 'text-anchor': 'top' },
+      paint: { 'text-color': p.pri[2], 'text-halo-color': p.labelHalo, 'text-halo-width': 2 },
+    },
     { id: 'suspect-fill', type: 'fill', source: 'suspect', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': p.suspect, 'fill-opacity': 0.06 } },
     { id: 'suspect-line', type: 'line', source: 'suspect', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'line-color': p.suspect, 'line-width': 1.5, 'line-dasharray': [1, 2] } },
     {
@@ -209,6 +216,7 @@ export function MapView({ sim }: { sim: Sim }) {
         wardpts: { type: 'geojson', data: wardpts },
         patrol: { type: 'geojson', data: empty() },
         suspect: { type: 'geojson', data: empty() },
+        events: { type: 'geojson', data: empty() },
         routes: { type: 'geojson', data: empty() },
         incidents: { type: 'geojson', data: empty() },
         units: { type: 'geojson', data: empty() },
@@ -402,6 +410,15 @@ export function MapView({ sim }: { sim: Sim }) {
         sf.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circlePoly(s.lastSeen.x, s.lastSeen.y, r, 48)] } });
       }
       src('suspect')?.setData({ type: 'FeatureCollection', features: sf });
+      // city events with an area
+      const ef: GeoJSON.Feature[] = [];
+      for (const ev of sim.events) {
+        if (ev.x === undefined) continue;
+        const r = ev.r ?? 600;
+        ef.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [circlePoly(ev.x, ev.y!, r, 56)] } });
+        ef.push({ type: 'Feature', properties: { n: `【${ev.icon}】${ev.name}` }, geometry: { type: 'Point', coordinates: ll(ev.x, ev.y! + r) } });
+      }
+      src('events')?.setData({ type: 'FeatureCollection', features: ef });
       // traffic (throttled)
       if (ui.layers.traffic && sim.trafficVersion !== trafficCache.v && performance.now() - trafficCache.at > 8000) {
         trafficCache = { v: sim.trafficVersion, at: performance.now() };

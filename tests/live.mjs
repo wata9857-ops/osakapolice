@@ -1,0 +1,40 @@
+// Living-city scenario: player idles → AUTO takes over; trigger a city event from the menu.
+import puppeteer from 'puppeteer-core';
+const url = process.argv[2] ?? 'http://localhost:5200/';
+const browser = await puppeteer.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: 'new', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1180, height: 820, hasTouch: true });
+const errors = [];
+page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+await page.evaluateOnNewDocument(() => { localStorage.setItem('opd-ui', JSON.stringify({ theme: 'dark' })); localStorage.removeItem('opd-save-v1'); });
+await page.goto(url, { waitUntil: 'networkidle0', timeout: 120000 });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const click = (t, sel = 'button') => page.evaluate((t, sel) => { const b = [...document.querySelectorAll(sel)].find((x) => x.textContent.includes(t)); b?.click(); return !!b; }, t, sel);
+await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent.includes('勤務開始')), { timeout: 120000 });
+await click('21:00') || await click('19:00 夜');
+await click('多');
+await click('勤務開始');
+await page.waitForSelector('.maplibregl-canvas');
+await sleep(3000);
+// trigger an event through the menu
+await page.evaluate(() => document.querySelector('button[title="メニュー"]').click());
+await sleep(500);
+await page.select('.menu select:nth-of-type(1)', 'baseball').catch(() => {});
+await page.evaluate(() => { const sels = [...document.querySelectorAll('.menu select')]; const s = sels[sels.length - 1]; s.value = 'fireworks'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+await sleep(300);
+await page.evaluate(() => { const bs = [...document.querySelectorAll('.menu button')].filter((b) => b.textContent.trim() === '発生'); bs[0]?.click(); });
+await sleep(1500);
+await click('×4');
+await page.screenshot({ path: 'tests/shots/30-event.png' });
+// stay idle → AUTO should take over (default 45 s)
+const label = async () => page.evaluate(() => document.querySelector('.auto-chip')?.textContent);
+console.log('auto chip before:', await label());
+await sleep(52000);
+console.log('auto chip after idle:', await label());
+await page.screenshot({ path: 'tests/shots/31-auto.png' });
+const radio = await page.evaluate(() => [...document.querySelectorAll('.rmsg .rtx')].slice(-12).map((e) => e.textContent).join('\n'));
+console.log(radio);
+console.log(await page.evaluate(() => document.querySelector('.kpi.score')?.textContent));
+await browser.close();
+console.log(errors.length ? errors.join('\n') : 'no console errors');

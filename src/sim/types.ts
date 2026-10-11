@@ -179,6 +179,11 @@ export interface Incident {
   outcome: string;
   transport: boolean;
   reported: Set<string>; // dedupe of radio messages
+  auto?: boolean; // handled by the automatic dispatcher
+  eventName?: string; // spawned by a city event
+  cordoned?: boolean;
+  selfInit?: boolean; // discovered by a patrol unit
+  score?: number;
 }
 
 export interface RadioMsg {

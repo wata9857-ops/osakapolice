@@ -1,6 +1,30 @@
 import { useSim, useSimTick, fmtDur } from './hooks';
 import { setUI, useUI } from './store';
 import { AVAILABLE } from '../sim/types';
+import { rankOf, nextRank } from '../sim/engine';
+import { autoCountdown } from '../sim/autopilot';
+
+export function AutoChip() {
+  const sim = useSim();
+  useSimTick(2);
+  const cd = autoCountdown(sim);
+  const mode = sim.settings.auto;
+  const cls = mode === 'off' ? '' : cd === 0 ? 'auto-on' : 'auto-wait';
+  const label = mode === 'off' ? 'AUTO 切' : mode === 'full' ? '全自動' : cd === 0 ? '自動指令中' : `AUTO ${Math.ceil(cd)}s`;
+  return (
+    <button
+      className={`btn sm auto-chip ${cls}`}
+      title="自動指令：操作がない間、未指令事案を自動で指令・警らを実施（タップで切替）"
+      onClick={() => {
+        sim.settings.auto = mode === 'off' ? 'assist' : mode === 'assist' ? 'full' : 'off';
+        sim.markActive();
+        sim.emit('change');
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
 export function Emblem({ size = 30 }: { size?: number }) {
   // abstract command-centre mark (not an official emblem)
@@ -26,6 +50,7 @@ export function TopBar({ phone }: { phone: boolean }) {
   const rt = sim.stats.respTimes.slice(-30);
   const avg = rt.length ? rt.reduce((a, b) => a + b, 0) / rt.length : NaN;
   const speeds = [0, 1, 2, 4, 8];
+  const nr = nextRank(sim.stats.score);
   return (
     <header className="topbar">
       <div className="brand">
@@ -65,9 +90,32 @@ export function TopBar({ phone }: { phone: boolean }) {
           <span className="kpi-l">平均現着</span>
           <span className="kpi-v">{fmtDur(avg)}</span>
         </div>
+        <div className="kpi score" title={nr ? `次の階級「${nr[1]}」まで ${nr[0] - sim.stats.score}点` : '最高階級'}>
+          <span className="kpi-l">
+            評価 · {rankOf(sim.stats.score)}
+            {sim.stats.streak >= 3 ? ` · ${sim.stats.streak}連続` : ''}
+          </span>
+          <span className="kpi-v">{sim.stats.score.toLocaleString()}</span>
+          {nr && (
+            <span className="rank-bar">
+              <i style={{ width: `${Math.min(100, (sim.stats.score / nr[0]) * 100)}%` }} />
+            </span>
+          )}
+        </div>
+        {sim.events.length > 0 && (
+          <div className="kpi opt events-kpi" title={sim.events.map((e) => e.name).join('\n')}>
+            <span className="kpi-l">情勢</span>
+            <span className="kpi-v ev-icons">
+              {sim.events.map((e) => (
+                <i key={e.id}>{e.icon}</i>
+              ))}
+            </span>
+          </div>
+        )}
       </div>
       <div className="top-spacer" />
       <div className="top-tools">
+        <AutoChip />
         {!phone && (
           <div className="seg" role="group" aria-label="時間倍率">
             {speeds.map((s) => (

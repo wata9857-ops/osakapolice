@@ -2,6 +2,7 @@
 import { useSyncExternalStore } from 'react';
 
 export type Theme = 'dark' | 'light';
+export type ToastLevel = 'info' | 'warn' | 'urgent' | 'score' | 'score minus' | 'rank';
 export type Selection = { kind: 'unit' | 'incident' | 'facility'; id: string } | null;
 
 export type MapMode =
@@ -38,9 +39,10 @@ export interface UIState {
   driving: string | null;
   layers: Layers;
   menu: null | 'layers' | 'main' | 'stats';
-  toasts: { id: number; text: string; level: 'info' | 'warn' | 'urgent'; incidentId?: string; unitId?: string }[];
+  toasts: { id: number; text: string; level: ToastLevel; incidentId?: string; unitId?: string }[];
   flyTo: { x: number; y: number; zoom?: number; seq: number } | null;
   speech: boolean;
+  sfx: boolean;
 }
 
 const saved = (() => {
@@ -71,6 +73,7 @@ let state: UIState = {
   toasts: [],
   flyTo: null,
   speech: saved.speech ?? false,
+  sfx: saved.sfx ?? true,
 };
 
 const subs = new Set<() => void>();
@@ -80,8 +83,8 @@ export function getUI() {
 export function setUI(patch: Partial<UIState> | ((s: UIState) => Partial<UIState>)) {
   const p = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...p };
-  if ('theme' in p || 'leftOpen' in p || 'radio' in p || 'layers' in p || 'speech' in p)
-    localStorage.setItem('opd-ui', JSON.stringify({ theme: state.theme, leftOpen: state.leftOpen, radio: state.radio, layers: state.layers, speech: state.speech }));
+  if ('theme' in p || 'leftOpen' in p || 'radio' in p || 'layers' in p || 'speech' in p || 'sfx' in p)
+    localStorage.setItem('opd-ui', JSON.stringify({ theme: state.theme, leftOpen: state.leftOpen, radio: state.radio, layers: state.layers, speech: state.speech, sfx: state.sfx }));
   for (const s of subs) s();
 }
 export function useUI<T>(sel: (s: UIState) => T): T {
@@ -95,10 +98,10 @@ export function useUI<T>(sel: (s: UIState) => T): T {
 }
 
 let toastSeq = 0;
-export function toast(text: string, level: 'info' | 'warn' | 'urgent' = 'info', extra: { incidentId?: string; unitId?: string } = {}) {
+export function toast(text: string, level: ToastLevel = 'info', extra: { incidentId?: string; unitId?: string } = {}) {
   const id = ++toastSeq;
   setUI((s) => ({ toasts: [...s.toasts.slice(-3), { id, text, level, ...extra }] }));
-  setTimeout(() => setUI((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), level === 'urgent' ? 9000 : 5000);
+  setTimeout(() => setUI((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), level === 'urgent' || level === 'rank' ? 9000 : level.startsWith('score') ? 3500 : 5000);
 }
 
 let flySeq = 0;

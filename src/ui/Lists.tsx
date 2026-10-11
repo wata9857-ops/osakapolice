@@ -3,6 +3,7 @@ import { useSim, useSimTick, fmtDur, fmtMinShort } from './hooks';
 import { useUI, select, flyTo } from './store';
 import { STATUS_LABEL, UNIT_KIND_LABEL, AVAILABLE, type Unit, type Incident } from '../sim/types';
 import { PRIORITY_LABEL } from '../sim/incidentTypes';
+import { rankOf } from '../sim/engine';
 
 const INC_ST: Record<string, string> = { pending: '未指令', dispatched: '指令済', onscene: '現場', resolved: '終結', failed: '未解決' };
 
@@ -33,6 +34,14 @@ export function IncidentRow({ inc, sel }: { inc: Incident; sel: boolean }) {
           {inc.suspect && !inc.suspect.caught && inc.suspect.free ? ' · マル被逃走中' : ''}
           {inc.suspect?.caught ? ' · 確保' : ''}
         </div>
+        {(inc.auto || inc.selfInit || inc.eventName || inc.score !== undefined) && (
+          <div className="row-tags">
+            {inc.selfInit && <span className="tag t-self">現認</span>}
+            {inc.auto && <span className="tag t-auto">自動指令</span>}
+            {inc.eventName && <span className="tag t-ev">{inc.eventName}</span>}
+            {inc.score !== undefined && <span className={`tag ${inc.score >= 0 ? 't-plus' : 't-minus'}`}>{inc.score >= 0 ? '+' : ''}{inc.score}</span>}
+          </div>
+        )}
       </div>
       <div className="row-side">
         <span className="mono" style={{ fontSize: 15, fontWeight: 700 }}>
@@ -40,6 +49,31 @@ export function IncidentRow({ inc, sel }: { inc: Incident; sel: boolean }) {
         </span>
         <span className={`st ${stCls}`}>{INC_ST[inc.status]}</span>
       </div>
+    </div>
+  );
+}
+
+export function EventStrip() {
+  const sim = useSim();
+  if (!sim.events.length) return null;
+  return (
+    <div className="ev-strip">
+      {sim.events.map((e) => (
+        <div
+          key={e.id}
+          className={`ev-card ev-${e.key}`}
+          onClick={() => {
+            if (e.x !== undefined) flyTo(e.x, e.y!, e.r && e.r > 1500 ? 12.5 : 14);
+          }}
+        >
+          <span className="ev-ic">{e.icon}</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="ev-name">{e.name}</div>
+            <div className="ev-desc">{e.desc}</div>
+          </div>
+          <span className="mono muted small">残{Math.max(1, Math.round((e.t1 - sim.t) / 60))}分</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -75,6 +109,7 @@ export function IncidentList() {
         </button>
       </div>
       <div className="scroll">
+        <EventStrip />
         {list.length === 0 && <div className="empty">{f === 'pending' ? '未指令の事案はありません' : '受理中の事案はありません。110番入電を待機中…'}</div>}
         {list.map((i) => (
           <IncidentRow key={i.id} inc={i} sel={sel?.kind === 'incident' && sel.id === i.id} />
@@ -248,6 +283,14 @@ export function HistoryList() {
         <div className="k">平均現着</div>
         <div className="v mono">
           {fmtDur(avg)}（P1 {fmtDur(p1avg)}）
+        </div>
+        <div className="k">評価点</div>
+        <div className="v mono">
+          {s.score.toLocaleString()}（{rankOf(s.score)}）最高連続{s.bestStreak}
+        </div>
+        <div className="k">自主活動</div>
+        <div className="v mono">
+          職質{s.questioned} · 取締{s.tickets} · 自動指令{s.auto}
         </div>
       </div>
       <div className="filterbar">

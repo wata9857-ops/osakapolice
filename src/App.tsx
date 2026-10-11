@@ -8,6 +8,9 @@ import { IncidentList, UnitList, HistoryList } from './ui/Lists';
 import { DetailPanel, RadioPanel, ModeBanner, Toasts, Menus, useRadioSpeech } from './ui/Panels';
 import { setUI, useUI, toast, select } from './ui/store';
 import type { Incident } from './sim/types';
+import { rankOf } from './sim/engine';
+import type { ActiveEvent } from './sim/events';
+import { sfx, setSfx, unlockAudio } from './ui/sfx';
 
 const DriveMode = lazy(() => import('./drive/DriveMode'));
 const SAVE_KEY = 'opd-save-v1';
@@ -203,12 +206,51 @@ function Console({ onNewGame }: { onNewGame: () => void }) {
     };
   }, [save]);
 
-  // incoming call notifications
+  // player activity resets the auto-dispatch timer (and unlocks audio on iOS)
   useEffect(() => {
+    const on = () => {
+      sim.markActive();
+      unlockAudio();
+    };
+    window.addEventListener('pointerdown', on, true);
+    window.addEventListener('keydown', on, true);
+    window.addEventListener('wheel', on, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', on, true);
+      window.removeEventListener('keydown', on, true);
+      window.removeEventListener('wheel', on, true);
+    };
+  }, [sim]);
+  const sfxOn = useUI((s) => s.sfx);
+  useEffect(() => setSfx(sfxOn), [sfxOn]);
+
+  // notifications: incoming calls, score, rank, city events
+  useEffect(() => {
+    let rank = rankOf(sim.stats.score);
     return sim.on((type, p) => {
       if (type === 'incident') {
         const i = p as Incident;
         toast(`110番入電【${i.name}】${i.address}`, i.priority <= 1 ? 'urgent' : i.priority === 2 ? 'warn' : 'info', { incidentId: i.id });
+        sfx(i.priority <= 1 ? 'urgent' : 'call');
+        setTick((x) => x + 1);
+      } else if (type === 'score') {
+        const s = p as { delta: number; reason: string; incidentId?: string };
+        if (Math.abs(s.delta) >= 40) {
+          toast(`${s.delta >= 0 ? '+' : ''}${s.delta}  ${s.reason}`, s.delta >= 0 ? 'score' : 'score minus', { incidentId: s.incidentId });
+          sfx(s.delta >= 0 ? 'resolve' : 'fail');
+        }
+        const r = rankOf(sim.stats.score);
+        if (r !== rank) {
+          rank = r;
+          toast(`昇任！ 指令官の階級が「${r}」になりました`, 'rank');
+          sfx('rank');
+        }
+      } else if (type === 'event') {
+        const e = p as { ev: ActiveEvent; end: boolean };
+        if (!e.end) {
+          toast(`【情勢】${e.ev.name} — ${e.ev.desc}`, 'warn');
+          sfx('event');
+        }
         setTick((x) => x + 1);
       }
     });

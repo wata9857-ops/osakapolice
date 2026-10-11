@@ -7,6 +7,7 @@ import { UnitRow } from './Lists';
 import type { RadioMsg } from '../sim/types';
 import { areaPlan } from '../sim/units';
 import { INCIDENT_TYPES } from '../sim/incidentTypes';
+import { EVENT_DEFS, startEvent } from '../sim/events';
 import { snapWaypoints } from './util';
 
 export function DetailPanel() {
@@ -365,6 +366,11 @@ export function Toasts() {
 }
 
 // ------------------------------------------------------------------ menus
+const EVENT_LABEL: Record<string, string> = {
+  rain: '大雨', baseball: '京セラドーム試合終了', fireworks: 'なにわ淀川花火大会', tenjin: '天神祭', dotonbori: '道頓堀に群衆',
+  usj: 'USJ閉園混雑', halloween: 'ハロウィン（アメ村）', series_snatch: 'ひったくり続発', fugitive: '指名手配犯の目撃',
+  blackout: '大規模停電', pursuit: '盗難車両の進入', expressway: '阪神高速通行止め', vip: '要人来阪', friday: '週末の夜',
+};
 function Sw({ on, label, sub, onClick }: { on: boolean; label: string; sub?: string; onClick: () => void }) {
   return (
     <div className="switch-row" onClick={onClick}>
@@ -384,7 +390,9 @@ export function Menus({ onNewGame, onSave }: { onNewGame: () => void; onSave: ()
   const layers = useUI((s) => s.layers);
   const theme = useUI((s) => s.theme);
   const speech = useUI((s) => s.speech);
+  const sfxOn = useUI((s) => s.sfx);
   const [spawnType, setSpawnType] = useState(INCIDENT_TYPES[0].key);
+  const [evKey, setEvKey] = useState(EVENT_DEFS[0].key);
   if (!menu) return null;
   const close = () => setUI({ menu: null });
   const L = (k: keyof typeof layers) => () => setUI({ layers: { ...layers, [k]: !layers[k] } });
@@ -464,6 +472,61 @@ export function Menus({ onNewGame, onSave }: { onNewGame: () => void; onSave: ()
                 ))}
               </div>
             </div>
+            <div className="block">
+              <div className="block-h">自動指令（AUTO）</div>
+              <div className="seg">
+                {(
+                  [
+                    ['off', '切'],
+                    ['assist', '無操作時'],
+                    ['full', '全自動'],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button
+                    key={k}
+                    className={sim.settings.auto === k ? 'on' : ''}
+                    onClick={() => {
+                      sim.settings.auto = k;
+                      sim.markActive();
+                      sim.emit('change');
+                    }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {sim.settings.auto === 'assist' && (
+                <>
+                  <div className="small muted" style={{ margin: '8px 0 4px' }}>
+                    操作がない状態が続くと自動で指令・応援・緊急配備・警らを実施（自動指令の事案は評価点が1/4）
+                  </div>
+                  <div className="seg">
+                    {[20, 45, 90, 180].map((d) => (
+                      <button
+                        key={d}
+                        className={sim.settings.autoDelay === d ? 'on' : ''}
+                        onClick={() => {
+                          sim.settings.autoDelay = d;
+                          sim.emit('change');
+                        }}
+                      >
+                        {d < 60 ? `${d}秒` : `${d / 60}分`}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <Sw
+              on={sim.settings.events}
+              label="情勢イベント"
+              sub="大雨・花火大会・試合終了・連続ひったくり・手配犯・停電・追跡など"
+              onClick={() => {
+                sim.settings.events = !sim.settings.events;
+                sim.emit('change');
+              }}
+            />
+            <Sw on={sfxOn} label="効果音" sub="入電チャイム・至急アラート・解決音" onClick={() => setUI({ sfx: !sfxOn })} />
             <Sw on={theme === 'dark'} label="ダークモード" sub="夜間の指令室向け" onClick={() => setUI({ theme: theme === 'dark' ? 'light' : 'dark' })} />
             <Sw on={speech} label="無線の音声読み上げ" sub="端末の日本語音声を使用" onClick={() => setUI({ speech: !speech })} />
             <Sw
@@ -509,6 +572,36 @@ export function Menus({ onNewGame, onSave }: { onNewGame: () => void; onSave: ()
                   }}
                 >
                   ランダム
+                </button>
+              </div>
+            </div>
+            <div className="block">
+              <div className="block-h">訓練：情勢イベントを発生</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={evKey}
+                  onChange={(e) => setEvKey(e.target.value)}
+                  style={{ flex: 1, minHeight: 40, background: 'var(--bg2)', color: 'var(--tx0)', border: '1px solid var(--line2)', fontSize: 14 }}
+                >
+                  {EVENT_DEFS.map((d) => (
+                    <option key={d.key} value={d.key}>
+                      {EVENT_LABEL[d.key] ?? d.key}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn sm"
+                  onClick={() => {
+                    const ev = startEvent(sim, evKey);
+                    if (ev) {
+                      sim.say('本部', '各移動', `本部から各移動。${ev.name}。${ev.desc}。`, { level: 'urgent' });
+                      sim.emit('event', { ev, end: false });
+                      if (ev.x !== undefined) setUI({ flyTo: { x: ev.x, y: ev.y!, zoom: 13, seq: Date.now() } });
+                    } else toast('このイベントは現在発生できません');
+                    close();
+                  }}
+                >
+                  発生
                 </button>
               </div>
             </div>
